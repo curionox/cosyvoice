@@ -128,6 +128,27 @@ class CosyVoice:
                 yield model_output
                 start_time = time.time()
 
+    def inference_instruct_sft(self, tts_text, spk_id, instruct_text, stream=False, speed=1.0, text_frontend=True):
+        """Instruct mode using spk_id for voice timbre, instruct_text for style control. No audio needed.
+
+        Handles both v1 spk2info (embedding-only) and v3 spk2info (full zero-shot data).
+        For CosyVoice3 with v3 spk2info: uses instruct2 path with cached speaker features.
+        For v1 spk2info or CosyVoice1/2: uses SFT-instruct path.
+        """
+        # For CosyVoice3, instruct_text should include <|endofprompt|>
+        if self.__class__.__name__ == 'CosyVoice3' and '<|endofprompt|>' not in instruct_text:
+            instruct_text = 'You are a helpful assistant. {}<|endofprompt|>'.format(instruct_text)
+        instruct_text = self.frontend.text_normalize(instruct_text, split=False, text_frontend=text_frontend)
+        for i in tqdm(self.frontend.text_normalize(tts_text, split=True, text_frontend=text_frontend)):
+            model_input = self.frontend.frontend_instruct_sft(i, spk_id, instruct_text, self.sample_rate)
+            start_time = time.time()
+            logging.info('synthesis text {}'.format(i))
+            for model_output in self.model.tts(**model_input, stream=stream, speed=speed):
+                speech_len = model_output['tts_speech'].shape[1] / self.sample_rate
+                logging.info('yield speech len {}, rtf {}'.format(speech_len, (time.time() - start_time) / speech_len))
+                yield model_output
+                start_time = time.time()
+
     def inference_vc(self, source_wav, prompt_wav, stream=False, speed=1.0):
         model_input = self.frontend.frontend_vc(source_wav, prompt_wav, self.sample_rate)
         start_time = time.time()
@@ -230,11 +251,7 @@ class CosyVoice3(CosyVoice2):
 def AutoModel(**kwargs):
     if not os.path.exists(kwargs['model_dir']):
         kwargs['model_dir'] = snapshot_download(kwargs['model_dir'])
-    if os.path.exists('{}/cosyvoice.yaml'.format(kwargs['model_dir'])):
-        return CosyVoice(**kwargs)
-    elif os.path.exists('{}/cosyvoice2.yaml'.format(kwargs['model_dir'])):
-        return CosyVoice2(**kwargs)
-    elif os.path.exists('{}/cosyvoice3.yaml'.format(kwargs['model_dir'])):
+    if os.path.exists('{}/cosyvoice3.yaml'.format(kwargs['model_dir'])):
         return CosyVoice3(**kwargs)
     else:
         raise TypeError('No valid model type found!')

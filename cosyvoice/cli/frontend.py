@@ -159,10 +159,28 @@ class CosyVoiceFrontEnd:
         texts = [i for i in texts if not is_only_punctuation(i)]
         return texts if split is True else text
 
+    def _is_v3_spk2info(self, spk_id):
+        """Detect whether spk2info entry is v3 format (full zero-shot) or v1 format (embedding-only).
+        v3 format has: prompt_text, llm_prompt_speech_token, flow_prompt_speech_token, prompt_speech_feat, etc.
+        v1 format has: only 'embedding' (and optionally 'speech_feat').
+        """
+        if spk_id not in self.spk2info:
+            return False
+        info = self.spk2info[spk_id]
+        v3_required_keys = {'llm_prompt_speech_token', 'flow_prompt_speech_token', 'prompt_speech_feat', 'llm_embedding', 'flow_embedding'}
+        return v3_required_keys.issubset(info.keys())
+
     def frontend_sft(self, tts_text, spk_id):
         tts_text_token, tts_text_token_len = self._extract_text_token(tts_text)
-        embedding = self.spk2info[spk_id]['embedding']
-        model_input = {'text': tts_text_token, 'text_len': tts_text_token_len, 'llm_embedding': embedding, 'flow_embedding': embedding}
+        if self._is_v3_spk2info(spk_id):
+            # v3 format: has separate llm_embedding and flow_embedding
+            embedding_llm = self.spk2info[spk_id]['llm_embedding']
+            embedding_flow = self.spk2info[spk_id]['flow_embedding']
+        else:
+            # v1 format: single 'embedding' field used for both
+            embedding_llm = self.spk2info[spk_id]['embedding']
+            embedding_flow = embedding_llm
+        model_input = {'text': tts_text_token, 'text_len': tts_text_token_len, 'llm_embedding': embedding_llm, 'flow_embedding': embedding_flow}
         return model_input
 
     def frontend_zero_shot(self, tts_text, prompt_text, prompt_wav, resample_rate, zero_shot_spk_id):
@@ -206,11 +224,77 @@ class CosyVoiceFrontEnd:
         model_input['prompt_text_len'] = instruct_text_token_len
         return model_input
 
+    def frontend_instruct_sft(self, tts_text, spk_id, instruct_text, resample_rate=24000):
+        """Instruct mode using spk_id for voice timbre, instruct_text for style control. No audio needed.
+
+        Supports both v1 and v3 spk2info formats:
+        - v3 format (full zero-shot): uses instruct2 path with cached speaker features.
+          instruct_text replaces prompt_text, llm_prompt_speech_token is removed (instruct2 style).
+        - v1 format (embedding-only): uses SFT-instruct path with just embedding + instruct_text.
+        """
+        tts_text_token, tts_text_token_len = self._extract_text_token(tts_text)
+        instruct_text_token, instruct_text_token_len = self._extract_text_token(instruct_text)
+
+        if self._is_v3_spk2info(spk_id):
+            # v3 path: use cached zero-shot data, instruct2 style
+            # Copy cached speaker data, replace prompt_text with instruct_text
+            model_input = {**self.spk2info[spk_id]}
+            model_input['text'] = tts_text_token
+            model_input['text_len'] = tts_text_token_len
+            # Replace prompt_text with instruct_text (instruct2 style)
+            model_input['prompt_text'] = instruct_text_token
+            model_input['prompt_text_len'] = instruct_text_token_len
+            # Remove llm_prompt_speech_token (instruct2 removes this)
+            model_input.pop('llm_prompt_speech_token', None)
+            model_input.pop('llm_prompt_speech_token_len', None)
+            return model_input
+        else:
+            # v1 path: embedding-only, SFT-instruct style
+            embedding = self.spk2info[spk_id]['embedding']
+            model_input = {
+                'text': tts_text_token,
+                'text_len': tts_text_token_len,
+                'prompt_text': instruct_text_token,
+                'prompt_text_len': instruct_text_token_len,
+                'llm_embedding': embedding,
+                'flow_embedding': embedding,
+            }
+            return model_input
+
     def frontend_instruct2(self, tts_text, instruct_text, prompt_wav, resample_rate, zero_shot_spk_id):
-        model_input = self.frontend_zero_shot(tts_text, instruct_text, prompt_wav, resample_rate, zero_shot_spk_id)
-        del model_input['llm_prompt_speech_token']
-        del model_input['llm_prompt_speech_token_len']
-        return model_input
+        """Instruct2 前端处理
+
+        支持两种模式：
+        1. prompt_wav 模式：从上传的音频提取音色特征
+        2. zero_shot_spk_id 模式：使用预训练音色 + 新的情感指令
+        """
+        if zero_shot_spk_id and zero_shot_spk_id != '':
+            # 使用预训练音色，但用新的 instruct_text
+            tts_text_token, tts_text_token_len = self._extract_text_token(tts_text)
+            instruct_text_token, instruct_text_token_len = self._extract_text_token(instruct_text)
+
+            # 复制预训练音色的特征
+            model_input = {**self.spk2info[zero_shot_spk_id]}
+
+            # 覆盖文本
+            model_input['text'] = tts_text_token
+            model_input['text_len'] = tts_text_token_len
+
+            # 关键：用新的 instruct_text 替换原来的 prompt_text
+            model_input['prompt_text'] = instruct_text_token
+            model_input['prompt_text_len'] = instruct_text_token_len
+
+            # instruct2 模式需要删除 llm_prompt_speech_token
+            model_input.pop('llm_prompt_speech_token', None)
+            model_input.pop('llm_prompt_speech_token_len', None)
+
+            return model_input
+        else:
+            # 原始逻辑：从 prompt_wav 提取特征
+            model_input = self.frontend_zero_shot(tts_text, instruct_text, prompt_wav, resample_rate, '')
+            del model_input['llm_prompt_speech_token']
+            del model_input['llm_prompt_speech_token_len']
+            return model_input
 
     def frontend_vc(self, source_speech_16k, prompt_wav, resample_rate):
         prompt_speech_token, prompt_speech_token_len = self._extract_speech_token(prompt_wav)
