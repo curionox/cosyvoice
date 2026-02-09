@@ -1,0 +1,20 @@
+2025-09-10 16:37:56,577 - INFO - 添加路径: D:\kt\aivioce\CosyVoice\third_party\Matcha-TTS
+2025-09-10 16:37:59,255 - INFO - GPU: NVIDIA GeForce RTX 4060 Ti
+2025-09-10 16:37:59,255 - INFO - GPU总显存: 16.0GB
+2025-09-10 16:37:59,255 - INFO - GPU可用显存: 16.0GB
+2025-09-10 16:37:59,256 - ERROR - 程序异常: EOF when reading a line
+Traceback (most recent call last):
+  File "D:\kt\aivioce\CosyVoice\precompile_trt_models.py", line 226, in <module>
+    main()
+  File "D:\kt\aivioce\CosyVoice\precompile_trt_models.py", line 198, in main
+    choice = input("请选择 (1/2, 默认1): ").strip()
+EOFError: EOF when reading a line
+2025-09-10 16:38:31,059 - INFO - ============================================================
+2025-09-10 16:38:31,059 - INFO - 自动预编译TensorRT模型
+2025-09-10 16:38:31,060 - INFO - ============================================================
+2025-09-10 16:38:31,060 - INFO - 添加路径: D:\kt\aivioce\CosyVoice\third_party\Matcha-TTS
+2025-09-10 16:38:42,989 - INFO - 模型路径: pretrained_models/CosyVoice-300M-SFT
+2025-09-10 16:38:42,989 - INFO - 配置: TRT + JIT + FP16
+2025-09-10 16:38:42,989 - INFO - 开始加载模型并转换TensorRT...
+2025-09-10 16:38:47,710 - INFO - input frame rate=50
+2025-09-10 16:39:04,294 - INFO - Converting onnx to trt...
