@@ -52,6 +52,9 @@ def load_wav(wav, target_sr, min_sr=16000):
 
 def convert_onnx_to_trt(trt_model, trt_kwargs, onnx_model, fp16):
     import tensorrt as trt
+    import threading
+    import time
+    print(torch.cuda.is_available())
     logging.info("Converting onnx to trt...")
     network_flags = 1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
     logger = trt.Logger(trt.Logger.INFO)
@@ -59,7 +62,7 @@ def convert_onnx_to_trt(trt_model, trt_kwargs, onnx_model, fp16):
     network = builder.create_network(network_flags)
     parser = trt.OnnxParser(network, logger)
     config = builder.create_builder_config()
-    config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 1 << 32)  # 4GB
+    config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 1 << 30)  # 减少到1GB避免显存不足
     if fp16:
         config.set_flag(trt.BuilderFlag.FP16)
     profile = builder.create_optimization_profile()
@@ -81,7 +84,45 @@ def convert_onnx_to_trt(trt_model, trt_kwargs, onnx_model, fp16):
         output_tensor = network.get_output(i)
         output_tensor.dtype = tensor_dtype
     config.add_optimization_profile(profile)
-    engine_bytes = builder.build_serialized_network(network, config)
+    
+    # 添加超时处理
+    engine_bytes = None
+    exception = None
+    
+    def build_engine():
+        nonlocal engine_bytes, exception
+        try:
+            logging.info("开始构建TensorRT引擎...")
+            engine_bytes = builder.build_serialized_network(network, config)
+            logging.info("TensorRT引擎构建完成")
+        except Exception as e:
+            exception = e
+            logging.error(f"TensorRT引擎构建失败: {e}")
+    
+    # 使用线程执行构建，设置5分钟超时
+    build_thread = threading.Thread(target=build_engine)
+    build_thread.daemon = True
+    build_thread.start()
+    
+    timeout = 300  # 5分钟超时
+    start_time = time.time()
+    while build_thread.is_alive():
+        elapsed = time.time() - start_time
+        if elapsed > timeout:
+            logging.error(f"TensorRT转换超时 ({timeout}秒)，可能是显存不足或模型复杂度过高")
+            raise RuntimeError("TensorRT conversion timeout - try reducing workspace size or use simpler optimization")
+        time.sleep(1)
+        if elapsed % 30 == 0:  # 每30秒输出一次进度
+            logging.info(f"TensorRT转换进行中... ({elapsed:.0f}秒)")
+    
+    build_thread.join()
+    
+    if exception:
+        raise exception
+    
+    if engine_bytes is None:
+        raise RuntimeError("Failed to build TensorRT engine")
+    
     # save trt engine
     with open(trt_model, "wb") as f:
         f.write(engine_bytes)

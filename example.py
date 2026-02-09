@@ -2,18 +2,35 @@ import sys
 sys.path.append('third_party/Matcha-TTS')
 from cosyvoice.cli.cosyvoice import AutoModel
 import torchaudio
+import torch
 
 
 def cosyvoice_example():
     """ CosyVoice Usage, check https://fun-audio-llm.github.io/ for more details
     """
     cosyvoice = AutoModel(model_dir='pretrained_models/CosyVoice-300M-SFT')
-    # sft usage
-    print(cosyvoice.list_available_spks())
-    # change stream=True for chunk stream inference
-    for i, j in enumerate(cosyvoice.inference_sft('你好，我是通义生成式语音大模型，请问有什么可以帮您的吗？', '中文女', stream=False)):
-        torchaudio.save('sft_{}.wav'.format(i), j['tts_speech'], cosyvoice.sample_rate)
+   # 开启流式
+    audio_chunks = []
 
+    for i, j in enumerate(
+        cosyvoice.inference_sft(
+            '你好，我是通义生成式语音大模型，请问有什么可以帮您的吗？',
+            '2',
+            stream=True   # ⭐ 关键点
+        )
+    ):
+        # j['tts_speech'] 是一个 tensor [1, T]
+        audio_chunks.append(j['tts_speech'])
+        print(f"收到第 {i} 个音频 chunk, 长度 {j['tts_speech'].shape[1]}")
+
+    # 流式结束后拼接
+    final_audio = torch.cat(audio_chunks, dim=1)
+
+    torchaudio.save(
+        'sft_stream.wav',
+        final_audio,
+        cosyvoice.sample_rate
+    )
     cosyvoice = AutoModel(model_dir='pretrained_models/CosyVoice-300M')
     # zero_shot usage
     for i, j in enumerate(cosyvoice.inference_zero_shot('收到好友从远方寄来的生日礼物，那份意外的惊喜与深深的祝福让我心中充满了甜蜜的快乐，笑容如花儿般绽放。', '希望你以后能够做的比我还好呦。', './asset/zero_shot_prompt.wav')):
@@ -103,8 +120,8 @@ def cosyvoice3_example():
 
 
 def main():
-    # cosyvoice_example()
-    # cosyvoice2_example()
+   #  cosyvoice_example()
+    #cosyvoice2_example()
     cosyvoice3_example()
 
 
